@@ -12,6 +12,8 @@ from tempfile import TemporaryDirectory
 from PIL import Image
 import numpy as np
 import boto3
+import re
+from datetime import date
 from botocore.exceptions import NoCredentialsError
 
 #Functions to help pull images off an htttp server
@@ -80,4 +82,25 @@ def create_thumbnail(raster, thumbnail_path, size=(256, 256)):
         # Save the thumbnail
         thumbnail.save(thumbnail_path, format="PNG")
 
+def delete_old_s3_files(bucket_name, prefix, start_date):
+    """
+    Delete files in the S3 bucket that have a filename date before the given start date.
+
+    Args:
+        bucket_name (str): Name of the S3 bucket.
+        prefix (str): Prefix for the thumbnails in the S3 bucket.
+        start_date (date): The start date to compare against.
+    """
+    s3 = boto3.resource('s3')
+    bucket = s3.Bucket(bucket_name)
+    
+    for obj in bucket.objects.filter(Prefix=prefix):
+        filename = obj.key
+        # Extract date from the filename using regex
+        match = re.search(r"(\d{4})(\d{2})(\d{2})", filename)
+        if match:
+            year, month, day = map(int, match.groups())
+            file_date = date(year, month, day)
+            if file_date < start_date:
+                obj.delete()
 

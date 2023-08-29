@@ -12,6 +12,8 @@ from tempfile import TemporaryDirectory
 from PIL import Image
 import numpy as np
 import boto3
+import re
+from datetime import date
 from botocore.exceptions import NoCredentialsError
 
 import stac_mod as sm
@@ -71,6 +73,10 @@ with TemporaryDirectory() as tmp_dir:
                 bbox_and_footprints[filename] = (bbox.bounds, footprint, s3_thumbnail_url)
 
 
+# Delete thumbnails that are before a given start date. This is to throttle the total size of collections
+prefix = "thumbnails/"  # Modify this prefix if needed
+start_date = date(2023, 8, 19)  # Modify this date as per your requirement
+sm.delete_old_s3_files(bucket_name, prefix, start_date)
 
 # Create STAC items from all the tifs in the temporary directory
 # List to hold all the STAC items
@@ -114,7 +120,7 @@ collection = pystac.Collection(
         spatial=pystac.SpatialExtent([[-180, -90, 180, 90]]),
         temporal=pystac.TemporalExtent([[datetime(2023, 7, 7, 0, 0, tzinfo=timezone.utc), None]])
     ),
-    license='your-license-here'  # Replace with your actual license
+    license='public domain'# Replace with your actual license
 )
 
 # Add all items to the collection
@@ -162,4 +168,17 @@ s3.put_object(Body=catalog_json, Bucket=bucket_name, Key=catalog_object_key, Con
 # Set the catalog's self_href to the S3 URL
 catalog.set_self_href(f'https://{bucket_name}.s3.amazonaws.com/{catalog_object_key}')
 
+# Set the catalog's parent to the stac-browser home
+catalog.links.append({
+    "rel": "parent",
+    "href": catalog.get_self_href(),
+    "type": "application/json"
+})
+
+# Set the collection's parent to the catalog
+collection.links.append({
+    "rel": "parent",
+    "href": catalog.get_self_href(),
+    "type": "application/json"
+})
 
