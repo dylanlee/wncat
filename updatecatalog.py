@@ -15,45 +15,57 @@ import boto3
 import re
 from datetime import date
 from botocore.exceptions import NoCredentialsError
+from rio_cogeo.cogeo import cog_translate
+from rio_cogeo.profiles import cog_profiles
 
 import stac_mod as sm
 
-
-########### Initialize catalog and collection
-
-# Create an S3 client 
-s3 = boto3.client('s3')
-
-# Specify your bucket name
+#### Load in previous catalog and collection from bucket
 bucket_name = 'fim-public'
-
-catalog = pystac.Catalog(id='Water Prediction Node', description='The geospatial asset catalog of the Water Prediction Node.')
-
-# viirs collection
-collection = pystac.Collection(
-    id='viirs-1-day',
-    description='VIIRS 1-day composite flood maps collection',
-    extent=pystac.Extent(
-        spatial=pystac.SpatialExtent([[-180, -90, 180, 90]]),
-        temporal=pystac.TemporalExtent([[datetime(2023, 7, 7, 0, 0, tzinfo=timezone.utc), None]])
-    ),
-    license='public domain'
-)
-
-# Key for the catalog object in the S3 bucket
 catalog_object_key = 'catalog.json'
+collection_object_key = 'collections/viirs-1-day.json'
 
-# Key for the collection object in the S3 bucket, within the "collections" folder
-collection_object_key = 'collections/collection.json'
+catalog_data = s3.get_object(Bucket=bucket_name, Key=catalog_object_key)
+catalog_content = catalog_data['Body'].read().decode('utf-8')
+catalog = pystac.Catalog.from_dict(json.loads(catalog_content))
 
-# Set the collection's self_href to the S3 URL
-collection.set_self_href(f'https://{bucket_name}.s3.amazonaws.com/{collection_object_key}')
+collection_data = s3.get_object(Bucket=bucket_name, Key=collection_object_key)
+collection_content = collection_data['Body'].read().decode('utf-8')
+collection = pystac.Collection.from_dict(json.loads(collection_content))
+
+#### delete catalog self_href and parent child relationships. Doing this because item addition gets confused otherwise.
+
+catalog.remove_links('self')
+catalog.remove_links('parent')
+catalog.remove_links('child')
+
+# Remove the self_href, parent, and child relationships for collection
+collection.remove_links('self')
+collection.remove_links('parent')
+collection.remove_links('child')
 
 ########### download images and add them to collection
 base_url = "https://floodlight.ssec.wisc.edu/composite/"
 
 soup = sm.fetch_page_content(base_url)
 urls = sm.extract_image_urls(base_url, soup, ["composite1", ".tif"])
+# Extract all item IDs from the collection
+item_ids = {item.id for item in collection.get_all_items()}
+
+# Extract date strings from item IDs
+item_dates = {re.search(r"(\d{8})", item_id).group(1) for item_id in item_ids if re.search(r"(\d{8})", item_id)}
+
+print("Current item in catalog span the dates:")
+print(item_dates)
+
+# Filter out the URLs where the date string matches any of the item dates
+filtered_urls = [url for url in urls if re.search(r"(\d{8})", url.split('/')[-1]).group(1) not in item_dates]
+
+print("candidate new URLs are:")
+print(filtered_urls)
+
+# Update the urls list
+urls = filtered_urls
 
 # Bounding boxes for the Continental US, Hawaii, and Alaska in WGS 1984 CRS 
 continental_us_bbox = box(-125.001650, 24.396308, -66.934570, 49.384358)
@@ -63,9 +75,8 @@ alaska_bbox = box(-178, 51.214183, -140, 71.538800)
 # Store all bounding boxes and footprints in a dictionary
 bbox_and_footprints = {}
 
-with TemporaryDirectory() as tmp_dir:
-    sm.download_images(urls[:10], tmp_dir)
-    print(f"Images saved in {tmp_dir}")
+with TemporaryDirectory(dir='/home/dylan/wncat/tmpimgs') as tmp_dir:
+    sm.download_images(urls, tmp_dir)
 
     # Iterate through all tif files in the temporary directory
     for filename in os.listdir(tmp_dir):
@@ -85,6 +96,15 @@ with TemporaryDirectory() as tmp_dir:
                 thumbnail_path = os.path.join(tmp_dir, f"thumbnail_{filename}.png")
                 sm.create_thumbnail(img_path, thumbnail_path)
 
+                # Convert the TIFF to a COG
+                cog_path = os.path.join(tmp_dir, f"cog_{filename}")
+                output_profile = cog_profiles.get("deflate")
+                cog_translate(img_path, cog_path, output_profile)
+
+                # Upload the COG to S3 in the 'assets' folder
+                s3_cog_key = f'assets/cog_{filename}'
+                s3.upload_file(cog_path, bucket_name, s3_cog_key)
+
                 # Upload to S3
                 try:
                     s3.upload_file(thumbnail_path, bucket_name, f'thumbnails/{filename}.png')
@@ -93,31 +113,23 @@ with TemporaryDirectory() as tmp_dir:
                 except NoCredentialsError:
                     print('Credentials not available.')
 
-                # Store the bounds, footprint, and thumbnail path
-                bbox_and_footprints[filename] = (bbox.bounds, footprint, s3_thumbnail_url)
-
-# date from which data for the collection begins
-start_date = date(2023, 8, 19)  # Modify this date as per your data storage requirement
-
-# Delete thumbnails that are before a given start date. This is to throttle the total size of collections
-prefix = "thumbnails/"  # Modify this prefix if needed
-sm.delete_old_s3_files(bucket_name, prefix, start_date)
-
-# Delete old items
-prefix = "items/"  # Modify this prefix if needed
-sm.delete_old_s3_files(bucket_name, prefix, start_date)
-
+                # Store the bounds, footprint, and COG S3 URL
+                s3_cog_url = f"https://{bucket_name}.s3.amazonaws.com/{s3_cog_key}"
+                bbox_and_footprints[filename] = (bbox.bounds, footprint, s3_thumbnail_url, s3_cog_url)
 # Create STAC items from all the tifs in the temporary directory
 # List to hold all the STAC items
 stac_items = []
 
 # Loop over the bbox_and_footprints dictionary
-for filename, (bbox, footprint, thumbnail_url) in bbox_and_footprints.items():
+for filename, (bbox, footprint, thumbnail_url,cog_url) in bbox_and_footprints.items():
+    #extract date from filename
+    item_datetime = sm.get_item_date(filename)
+
     item = pystac.Item(id=filename,
                        geometry=footprint,
                        bbox=bbox,
                        collection = collection,
-                       datetime=datetime(2023, 7, 7, 0, 0, tzinfo=timezone.utc),
+                       datetime=item_datetime,
                        properties={})
 
     # Add thumbnail asset
@@ -129,21 +141,20 @@ for filename, (bbox, footprint, thumbnail_url) in bbox_and_footprints.items():
         )
     )
 
-    # Append the new item to the list
-    stac_items.append(item)
-
-# Add the first 10 image assets from the URLs list
-for item, url in zip(stac_items, urls[:10]):
+    # add COG
     item.add_asset(
         key='image',
         asset=pystac.Asset(
-            href=url.strip(),
+            href=cog_url,
             media_type=pystac.MediaType.GEOTIFF
         )
     )
 
+    # Append the new item to the list
+    stac_items.append(item)
+
 for item in stac_items:
-    print("item added. now writing json")
+    
     # Key for the object in the S3 bucket, inside the "items" folder
     object_key = f'items/{item.id}.json'
  
@@ -154,15 +165,14 @@ for item in stac_items:
     item.set_self_href(f'https://{bucket_name}.s3.amazonaws.com/{object_key}')   
     # Convert the item to a JSON string
     item_json = json.dumps(item.to_dict())
-    print(item_json)
 
     # Write the JSON string to the S3 bucket
     s3.put_object(Body=item_json, Bucket=bucket_name, Key=object_key, ContentType='application/json')
 
-###### write catalog and collection
-
-# Set the catalog's self_href to the S3 URL
+# Restore the self_href, parent, and child relationships
 catalog.set_self_href(f'https://{bucket_name}.s3.amazonaws.com/{catalog_object_key}')
+collection.set_self_href(f'https://{bucket_name}.s3.amazonaws.com/{collection_object_key}')
+
 
 # Set the catalog's parent to the stac-browser home
 catalog_parent = pystac.Link(rel="parent", target=f'https://{bucket_name}.s3.amazonaws.com/{catalog_object_key}', media_type="application/json")

@@ -104,3 +104,14 @@ def delete_old_s3_files(bucket_name, prefix, start_date):
             if file_date < start_date:
                 obj.delete()
 
+def get_item_date(filename):
+    # Extract the date from the filename
+    date_match = re.search(r"(\d{4})(\d{2})(\d{2})", filename)
+    if date_match:
+        year, month, day = map(int, date_match.groups())
+        item_datetime = datetime(year, month, day, tzinfo=timezone.utc)
+    else:
+        # Default datetime if the filename doesn't match the expected format
+        item_datetime = datetime(2023, 7, 7, 0, 0, tzinfo=timezone.utc)
+
+    return item_datetime

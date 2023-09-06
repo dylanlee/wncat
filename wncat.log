@@ -1,0 +1,15 @@
+warning: Git tree '/home/dylan/wncat' is dirty
+Item dates are:
+{'20230901', '20230903', '20230829', '20230825', '20230831', '20230826', '20230828', '20230904', '20230902', '20230827', '20230830'}
+Filtered URLs are:
+[]
+warning: Git tree '/home/dylan/wncat' is dirty
+Item dates are:
+{'20230901', '20230903', '20230829', '20230825', '20230831', '20230826', '20230828', '20230904', '20230902', '20230827', '20230830'}
+Filtered URLs are:
+[]
+warning: Git tree '/home/dylan/wncat' is dirty
+Traceback (most recent call last):
+  File "/home/dylan/wncat/updatecatalog.py", line 32, in <module>
+    item_ids = {item.id for item in collection.get_all_items()}
+NameError: name 'collection' is not defined
