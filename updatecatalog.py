@@ -13,12 +13,16 @@ from PIL import Image
 import numpy as np
 import boto3
 import re
+import datetime
 from datetime import date
 from botocore.exceptions import NoCredentialsError
 from rio_cogeo.cogeo import cog_translate
 from rio_cogeo.profiles import cog_profiles
 
 import stac_mod as sm
+
+# Create an S3 client 
+s3 = boto3.client('s3')
 
 #### Load in previous catalog and collection from bucket
 bucket_name = 'fim-public'
@@ -55,6 +59,9 @@ item_ids = {item.id for item in collection.get_all_items()}
 # Extract date strings from item IDs
 item_dates = {re.search(r"(\d{8})", item_id).group(1) for item_id in item_ids if re.search(r"(\d{8})", item_id)}
 
+print("script running on")
+current_datetime = datetime.datetime.now()
+print(current_datetime)
 print("Current item in catalog span the dates:")
 print(item_dates)
 
@@ -103,12 +110,11 @@ with TemporaryDirectory(dir='/home/dylan/wncat/tmpimgs') as tmp_dir:
 
                 # Upload the COG to S3 in the 'assets' folder
                 s3_cog_key = f'assets/cog_{filename}'
-                s3.upload_file(cog_path, bucket_name, s3_cog_key)
+                sm.upload_to_s3_with_retry(s3, cog_path, bucket_name, s3_cog_key)
 
-                # Upload to S3
+                # Upload thumnail to s3
                 try:
-                    s3.upload_file(thumbnail_path, bucket_name, f'thumbnails/{filename}.png')
-                    # Make sure to replace this with the actual URL template of your S3 bucket
+                    sm.upload_to_s3_with_retry(s3, thumbnail_path, bucket_name, f'thumbnails/{filename}.png')
                     s3_thumbnail_url = f"https://{bucket_name}.s3.amazonaws.com/thumbnails/{filename}.png"
                 except NoCredentialsError:
                     print('Credentials not available.')

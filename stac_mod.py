@@ -115,3 +115,19 @@ def get_item_date(filename):
         item_datetime = datetime(2023, 7, 7, 0, 0, tzinfo=timezone.utc)
 
     return item_datetime
+
+def upload_to_s3_with_retry(s3_client, file_path, bucket, key, max_retries=5, backoff_factor=1.5):
+    attempt = 0
+    while attempt < max_retries:
+        try:
+            s3_client.upload_file(file_path, bucket, key)
+            return  # If upload succeeds, return from the function
+        except NoCredentialsError:
+            print('Credentials not available.')
+            return
+        except Exception as e:  # Catch other exceptions that might occur
+            print(f"Error on attempt {attempt}: {e}")
+            time.sleep(backoff_factor ** attempt)  # Exponential backoff
+            attempt += 1
+    raise Exception(f"Failed to upload {file_path} to s3://{bucket}/{key} after {max_retries} retries")
+
