@@ -3,6 +3,7 @@ from bs4 import BeautifulSoup
 import os
 import json
 import rasterio
+from rasterio.transform import from_bounds
 import urllib.request
 import pystac
 from pyproj import Transformer
@@ -15,6 +16,7 @@ import boto3
 import re
 from datetime import date
 from botocore.exceptions import NoCredentialsError
+import time
 
 #Functions to help pull images off an htttp server
 def fetch_page_content(url):
@@ -65,21 +67,29 @@ def transform_bbox_to_crs(bbox, src_crs, dst_crs):
 # Create a thumbnail from downloaded image
 def create_preview(raster, preview_path, size=(256, 256)):
     with rasterio.open(raster) as src:
-        # Read the image data and get the profile
-        img_data = src.read(1)
-        profile = src.profile
+        # Read the single band of the image
+        img_data = src.read(1)  # This reads band 1 into a 2D numpy array
+        
+        # Access the colormap from the raster if it exists
+        try:
+            colormap = src.colormap(1)  # Get the colormap for band 1
+            # Apply the colormap to create an RGB image
+            # Colormap keys are pixel values, and values are RGB colors
+            img_data_rgb = np.zeros((img_data.shape[0], img_data.shape[1], 3), dtype=np.uint8)
+            for key, value in colormap.items():
+                img_data_rgb[img_data == key] = value
+        except ValueError:
+            # Normalize the image data to 0-255 as a fallback if no colormap exists
+            img_data_normalized = ((img_data - img_data.min()) / (img_data.max() - img_data.min()) * 255).astype(np.uint8)
+            img_data_rgb = np.stack((img_data_normalized,) * 3, axis=-1)  # Stack to create a grayscale RGB image
 
-        # Normalize the image data to 0-255
-        img_data = (img_data - img_data.min()) / (img_data.max() - img_data.min()) * 255
-        img_data = img_data.astype(np.uint8)
+        # Create a PIL Image from the RGB data
+        pil_image = Image.fromarray(img_data_rgb)
 
-        # Create a PIL Image from the raster data
-        pil_image = Image.fromarray(img_data)
-
-        # Resize the image 
+        # Resize the image
         preview = pil_image.resize(size, Image.ANTIALIAS)
 
-        # Save the preview 
+        # Save the preview
         preview.save(preview_path, format="PNG")
 
 def delete_old_s3_files(bucket_name, prefix, start_date):
@@ -130,4 +140,3 @@ def upload_to_s3_with_retry(s3_client, file_path, bucket, key, max_retries=5, ba
             time.sleep(backoff_factor ** attempt)  # Exponential backoff
             attempt += 1
     raise Exception(f"Failed to upload {file_path} to s3://{bucket}/{key} after {max_retries} retries")
-

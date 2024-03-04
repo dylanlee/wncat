@@ -150,6 +150,11 @@ tmp_dir = tempfile.mkdtemp(dir='/home/dylan/wncat/tmpimgs')
 for link in tif_urls:
 
     filename = link.split("/")[-1]
+    base_filename = os.path.splitext(filename)[0]
+
+    #extract date from filename
+    item_datetime = get_item_date(filename)
+    item_datetime_string = item_datetime.strftime('%Y-%m-%d')
 
     img_path = os.path.join(tmp_dir, filename)
 
@@ -161,33 +166,44 @@ for link in tif_urls:
     with open(img_path, 'wb') as file:
         file.write(response.content)
 
+    def test_read_bands(raster):
+        with rasterio.open(raster) as src:
+            print("Number of bands:", src.count)
+            for b in range(1, src.count + 1):
+                try:
+                    data = src.read(b)
+                    print(f"Band {b} read successfully. Shape: {data.shape}")
+                except Exception as e:
+                    print(f"Error reading band {b}: {e}")
+
+    # Call this function with the path to your TIFF file
+    test_read_bands(img_path)
+
+
     # get information about image
     bbox, footprint, raster_crs = sm.get_bbox_and_footprint(img_path)
 
-    # Create thumbnail
-    thumbnail_path = os.path.join(tmp_dir, f"thumbnail_{filename}.png")
+    thumbnail_path = os.path.join(tmp_dir, f"thumbnail_{base_filename}.png")
     sm.create_preview(img_path, thumbnail_path)
 
     # Upload thumnail to s3
     try:
-        sm.upload_to_s3_with_retry(s3, thumbnail_path, bucket_name, f'thumbnails/{filename}.png')
-        s3_thumbnail_url = f"https://{bucket_name}.s3.amazonaws.com/thumbnails/{filename}.png"
+        sm.upload_to_s3_with_retry(s3, thumbnail_path, bucket_name, f'thumbnails/viirs-1-day/{item_datetime_string}/{base_filename}.png')
+        s3_thumbnail_url = f"https://{bucket_name}.s3.amazonaws.com/thumbnails/viirs-1-day/{item_datetime_string}/{base_filename}.png"
     except NoCredentialsError:
         print('Credentials not available.')
     
-    # create overview
-    overview_path = os.path.join(tmp_dir, f"overview_{filename}.png")
-    sm.create_preview(img_path, overview_path, size=(1920, 1920))  # Assuming this function exists and resizes the image
+    # create overview. A cog of the original image is <1 mb which is fine
+    overview_path = os.path.join(tmp_dir, f"overview_{filename}")
+    output_profile = cog_profiles.get("deflate")
+    cog_translate(img_path, overview_path, output_profile)
 
     # Upload overview to s3
     try:
-        sm.upload_to_s3_with_retry(s3, overview_path, bucket_name, f'overviews/{filename}.png')
-        s3_overview_url = f"https://{bucket_name}.s3.amazonaws.com/overviews/{filename}.png"
+        sm.upload_to_s3_with_retry(s3, overview_path, bucket_name, f"overviews/viirs-1-day/{item_datetime_string}/{filename}")
+        s3_overview_url = f"https://{bucket_name}.s3.amazonaws.com/overviews/viirs-1-day/{item_datetime_string}/{filename}"
     except NoCredentialsError:
         print('Credentials not available.') 
-
-    #extract date from filename
-    item_datetime = get_item_date(filename)
 
     truncated_id = filename.split("_")[0]
 
@@ -207,15 +223,17 @@ for link in tif_urls:
         asset=pystac.Asset(
             href=s3_thumbnail_url,
             title="Thumbnail Image",
+            media_type='image/png'
         )
     )
 
     # Add thumbnail asset
     item.add_asset(
-        key='image',
+        key='overview',
         asset=pystac.Asset(
-            href=s3_overview_url,
+            href= s3_overview_url,
             title="Overview Image",
+            media_type=pystac.MediaType.GEOTIFF
         )
     )
 
@@ -224,11 +242,14 @@ for link in tif_urls:
     item.add_asset(
         key='image',
         asset=pystac.Asset(
-            href=link,
+            href= link,
             title="Full resolution raster",
+            media_type=pystac.MediaType.GEOTIFF
         )
     )
- 
+    
+    # TODO add a link to the netcdf
+
     # validate the item
     try:
         item.validate()
@@ -238,8 +259,6 @@ for link in tif_urls:
 
     # add item to collection
     collection.add_item(item)
-
-    item_datetime_string = item_datetime.strftime('%Y-%m-%d')
 
     # Key for the object in the S3 bucket, inside the "items" folder
     object_key = f'items/viirs-1-day/{item_datetime_string}/{item.id}.json'
@@ -256,10 +275,10 @@ for link in tif_urls:
     # insert/update the item in the database
     loader.load_items(file=item.self_href, insert_mode=Methods.upsert)
 
-# clean up the tmp_dir
-for item in os.listdir(tmp_dir):
-    item_path = os.path.join(tmp_dir, item)
-    if os.path.isfile(item_path) or os.path.islink(item_path):
-        os.remove(item_path)  # Remove the file or link
-    elif os.path.isdir(item_path):
-        shutil.rmtree(item_path)  # Remove the directory and all its contents
+    # clean up the tmp_dir
+#    for item in os.listdir(tmp_dir):
+#        item_path = os.path.join(tmp_dir, item)
+#        if os.path.isfile(item_path) or os.path.islink(item_path):
+#            os.remove(item_path)  # Remove the file or link
+#        elif os.path.isdir(item_path):
+#            shutil.rmtree(item_path)  # Remove the directory and all its contents

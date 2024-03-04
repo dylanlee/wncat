@@ -204,4 +204,3 @@ collection_json = json.dumps(collection.to_dict())
 # Write the collection JSON string to the S3 bucket
 s3.put_object(Body=collection_json, Bucket=bucket_name, Key=collection_object_key, ContentType='application/json')
 
-
