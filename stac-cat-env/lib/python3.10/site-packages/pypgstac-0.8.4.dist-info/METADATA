@@ -1,0 +1,57 @@
+Metadata-Version: 2.1
+Name: pypgstac
+Version: 0.8.4
+Classifier: Intended Audience :: Developers
+Classifier: Intended Audience :: Information Technology
+Classifier: Intended Audience :: Science/Research
+Classifier: License :: OSI Approved :: MIT License
+Classifier: Programming Language :: Python :: 3.8
+Classifier: Programming Language :: Python :: 3.9
+Classifier: Programming Language :: Python :: 3.10
+Classifier: Programming Language :: Python :: 3.11
+Requires-Dist: smart-open ==6.3.*
+Requires-Dist: orjson >=3.5.2
+Requires-Dist: python-dateutil ==2.8.*
+Requires-Dist: fire ==0.4.*
+Requires-Dist: plpygis ==0.2.*
+Requires-Dist: pydantic >=1.7
+Requires-Dist: tenacity ==8.1.*
+Requires-Dist: cachetools ==5.3.*
+Requires-Dist: version-parser >=1.0.1
+Requires-Dist: pytest ; extra == 'test'
+Requires-Dist: pytest-cov ; extra == 'test'
+Requires-Dist: pystac[validation] ==1.* ; extra == 'test'
+Requires-Dist: types-cachetools ; extra == 'test'
+Requires-Dist: maturin >=1, <2 ; extra == 'build'
+Requires-Dist: flake8 ==3.9.* ; extra == 'dev'
+Requires-Dist: black >=21.7b0 ; extra == 'dev'
+Requires-Dist: mypy >=0.910 ; extra == 'dev'
+Requires-Dist: types-orjson ==0.1.1 ; extra == 'dev'
+Requires-Dist: types-pkg-resources ; extra == 'dev'
+Requires-Dist: ruff ==0.0.231 ; extra == 'dev'
+Requires-Dist: pre-commit ; extra == 'dev'
+Requires-Dist: psycopg[binary] ==3.1.* ; extra == 'psycopg'
+Requires-Dist: psycopg-pool ==3.1.* ; extra == 'psycopg'
+Requires-Dist: psycopg2-binary ; extra == 'migrations'
+Requires-Dist: migra ; extra == 'migrations'
+Provides-Extra: test
+Provides-Extra: build
+Provides-Extra: dev
+Provides-Extra: psycopg
+Provides-Extra: migrations
+Summary: Schema, functions and a python library for storing and accessing STAC collections and items in PostgreSQL
+Keywords: STAC,Postgresql,PgSTAC
+Author-email: David Bitner <bitner@dbspatial.com>
+License: MIT
+Requires-Python: >=3.8
+Description-Content-Type: text/markdown; charset=UTF-8; variant=GFM
+Project-URL: Homepage, https://stac-utils.github.io/pgstac/
+Project-URL: Documentation, https://stac-utils.github.io/pgstac/
+Project-URL: Issues, https://github.com/stac-utils/pgstac/issues
+Project-URL: Source, https://github.com/stac-utils/pgstac
+Project-URL: Changelog, https://stac-utils.github.io/pgstac/release-notes/
+
+# pypgstac
+
+Python tools for working with PGStac
+

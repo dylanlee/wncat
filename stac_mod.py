@@ -63,7 +63,7 @@ def transform_bbox_to_crs(bbox, src_crs, dst_crs):
     return box(minx, miny, maxx, maxy)
 
 # Create a thumbnail from downloaded image
-def create_thumbnail(raster, thumbnail_path, size=(256, 256)):
+def create_preview(raster, preview_path, size=(256, 256)):
     with rasterio.open(raster) as src:
         # Read the image data and get the profile
         img_data = src.read(1)
@@ -76,11 +76,11 @@ def create_thumbnail(raster, thumbnail_path, size=(256, 256)):
         # Create a PIL Image from the raster data
         pil_image = Image.fromarray(img_data)
 
-        # Resize the image to the thumbnail size
-        thumbnail = pil_image.resize(size, Image.ANTIALIAS)
+        # Resize the image 
+        preview = pil_image.resize(size, Image.ANTIALIAS)
 
-        # Save the thumbnail
-        thumbnail.save(thumbnail_path, format="PNG")
+        # Save the preview 
+        preview.save(preview_path, format="PNG")
 
 def delete_old_s3_files(bucket_name, prefix, start_date):
     """
@@ -88,7 +88,7 @@ def delete_old_s3_files(bucket_name, prefix, start_date):
 
     Args:
         bucket_name (str): Name of the S3 bucket.
-        prefix (str): Prefix for the thumbnails in the S3 bucket.
+        prefix (str): Prefix for the object in the S3 bucket.
         start_date (date): The start date to compare against.
     """
     s3 = boto3.resource('s3')
