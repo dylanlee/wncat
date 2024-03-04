@@ -87,9 +87,8 @@ else:
             spatial=pystac.SpatialExtent([[-180, -90, 180, 90]]),
             temporal=pystac.TemporalExtent([[start_datetime, None]])
         ),
-        license='public domain'
-    )
         license='CC0-1.0'
+    )
     # set stac version collection conforms to
     collection.stac_version = "1.0.0"
 
@@ -193,31 +192,30 @@ for link in tif_urls:
     truncated_id = filename.split("_")[0]
 
     item = pystac.Item(id=truncated_id,
-                       title=truncated_id,
                        geometry=footprint,
+                       bbox=bbox.bounds,
                        collection = collection,
                        datetime=item_datetime,
                        properties={
-                            "crs" : raster_crs
+                            "crs" : str(raster_crs),
+                            "processing level": "?"
                            })
 
     # Add thumbnail asset
     item.add_asset(
         key='thumbnail',
         asset=pystac.Asset(
-            href=thumbnail_url,
-            title="Thumbnail Image",
             href=s3_thumbnail_url,
+            title="Thumbnail Image",
         )
     )
 
     # Add thumbnail asset
     item.add_asset(
-        key='overview',
+        key='image',
         asset=pystac.Asset(
-            href=overview_url,
-            title="Overview Image",
             href=s3_overview_url,
+            title="Overview Image",
         )
     )
 
@@ -226,9 +224,8 @@ for link in tif_urls:
     item.add_asset(
         key='image',
         asset=pystac.Asset(
-            href=tif_url,
-            title="Full resolution raster",
             href=link,
+            title="Full resolution raster",
         )
     )
  
@@ -242,23 +239,27 @@ for link in tif_urls:
     # add item to collection
     collection.add_item(item)
 
-    # Set the item's self_href to the S3 URL
+    item_datetime_string = item_datetime.strftime('%Y-%m-%d')
 
-    item_datetime_string = dt_obj.strftime('%Y-%m-%d')
- 
     # Key for the object in the S3 bucket, inside the "items" folder
     object_key = f'items/viirs-1-day/{item_datetime_string}/{item.id}.json'
+
+    # Set the item's self_href to the S3 URL
+    item.set_self_href(f'https://{bucket_name}.s3.amazonaws.com/{object_key}')   
 
     # Convert the item to a JSON string
     item_json = json.dumps(item.to_dict())
 
-
-    item_datetime_string = dt_obj.strftime('%Y-%m-%d')
-
     # Write the JSON string to the S3 bucket
+    s3.put_object(Body=item_json, Bucket=bucket_name, Key=object_key, ContentType='application/json')
+
     # insert/update the item in the database
     loader.load_items(file=item.self_href, insert_mode=Methods.upsert)
 
 # clean up the tmp_dir
-shutil.rmtree(tmp_dir)
-
+for item in os.listdir(tmp_dir):
+    item_path = os.path.join(tmp_dir, item)
+    if os.path.isfile(item_path) or os.path.islink(item_path):
+        os.remove(item_path)  # Remove the file or link
+    elif os.path.isdir(item_path):
+        shutil.rmtree(item_path)  # Remove the directory and all its contents
