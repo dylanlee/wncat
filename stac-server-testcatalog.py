@@ -7,6 +7,7 @@ import json
 import rasterio
 import urllib.request
 import pystac
+from pystac.extensions.projection import ProjectionExtension
 from datetime import datetime, timezone
 from shapely.geometry import Polygon, mapping, box
 from pyproj import Transformer
@@ -78,22 +79,34 @@ else:
     # Convert the start_date to a datetime object with timezone info
     start_datetime = datetime.combine(start_date, datetime.min.time()).replace(tzinfo=timezone.utc)
 
-    # viirs collection
+    # This is the top level viirs-1-day collection. It will host sub-collections where the main thing that is different
+    # that the temporal extent will be the 24 hour period the composite was created in 0 Z.
     collection = pystac.Collection(
         id='viirs-1-day-composite',
-        description='VIIRS 1-day composite flood maps collection',
+        description='VIIRS 1-day composite flood water fraction product collection. Please contact slia at gmu.edu for product specific questions.',
         title = "viirs-1-day-composite",
+        keywords = ["VIIRS", "flood", "composite", "daily", "surface water"],
+        extensions = ["projection"]
         extent=pystac.Extent(
             spatial=pystac.SpatialExtent([[-180, -90, 180, 90]]),
             temporal=pystac.TemporalExtent([[start_datetime, None]])
         ),
-        license='CC0-1.0'
+        license='CC0-1.0',
     )
+
+    collection.add_link(pystac.Link(
+        rel=pystac.RelType.RELATED,
+        target='https://waternode.ciroh.org/data-guide.html',
+        title='VIIRS composite flood map entry in WPN data guide',
+        media_type='text/html'
+    ))
+
     # set stac version collection conforms to
     collection.stac_version = "1.0.0"
 
     collection.providers = [
         pystac.Provider(name="NOAA NESDIS", roles=["producer", "licensor"], url="https://www.nesdis.noaa.gov/"),
+        pystac.Provider(name="VIIRS Flood Team at George Mason University", roles=["producer"], url="https://www.nesdis.noaa.gov/"),
     ]
 
     # Set the collection's parent, root and self_href 
@@ -128,7 +141,7 @@ else:
     
 ### Testing with one day of the s3 bucket data
 jpss_bucket_name = 'noaa-jpss'
-jpss_prefix = 'JPSS_Blended_Products/VFM_1day_GLB/TIF/2012/01/20/'
+jpss_prefix = 'JPSS_Blended_Products/VFM_1day_GLB/TIF/2012/01/21/'
 
 # 3rd argument is a boto3 s3 client instance
 def list_tifs_in_bucket(bucket, prefix, client):
@@ -148,6 +161,8 @@ tif_urls = list_tifs_in_bucket(jpss_bucket_name, jpss_prefix, s3)
 tmp_dir = tempfile.mkdtemp(dir='/home/dylan/wncat/tmpimgs')
 
 for link in tif_urls:
+    # make netcdf link so can link to it in item as well
+    netCDF_link = tif_url.replace("TIF", "NetCDF")
 
     filename = link.split("/")[-1]
     base_filename = os.path.splitext(filename)[0]
@@ -165,20 +180,6 @@ for link in tif_urls:
     # Write the content of the response to a file in the temporary directory
     with open(img_path, 'wb') as file:
         file.write(response.content)
-
-    def test_read_bands(raster):
-        with rasterio.open(raster) as src:
-            print("Number of bands:", src.count)
-            for b in range(1, src.count + 1):
-                try:
-                    data = src.read(b)
-                    print(f"Band {b} read successfully. Shape: {data.shape}")
-                except Exception as e:
-                    print(f"Error reading band {b}: {e}")
-
-    # Call this function with the path to your TIFF file
-    test_read_bands(img_path)
-
 
     # get information about image
     bbox, footprint, raster_crs = sm.get_bbox_and_footprint(img_path)
@@ -214,8 +215,28 @@ for link in tif_urls:
                        datetime=item_datetime,
                        properties={
                             "crs" : str(raster_crs),
-                            "processing level": "?"
+                            "processing level": "4"
+                            "satellite": "NPP, N20",
+                            "instrument": "VIIRS",
+                            "constellation": "JPSS",
+                            "gsd": "350 m"
                            })
+
+    item.providers = [
+        pystac.Provider(name="NOAA NESDIS", roles=["producer", "licensor"], url="https://www.nesdis.noaa.gov/"),
+        pystac.Provider(name="VIIRS Flood Team at George Mason University", roles=["producer"], url="https://www.nesdis.noaa.gov/"),
+    ]
+
+
+    # set stac version item conforms to
+    collection.stac_version = "1.0.0"
+
+    # Enable the projection extension on the item
+    ProjectionExtension.add_to(item)
+
+    # Add projection information
+    proj_ext = ProjectionExtension()
+    proj_ext.epsg = 4326
 
     # Add thumbnail asset
     item.add_asset(
@@ -229,11 +250,11 @@ for link in tif_urls:
 
     # Add thumbnail asset
     item.add_asset(
-        key='overview',
+        key='image',
         asset=pystac.Asset(
             href= s3_overview_url,
-            title="Overview Image",
-            media_type=pystac.MediaType.GEOTIFF
+            title="cloud optimized geotiff",
+            media_type=pystac.MediaType.COG
         )
     )
 
@@ -242,22 +263,13 @@ for link in tif_urls:
     item.add_asset(
         key='image',
         asset=pystac.Asset(
-            href= link,
-            title="Full resolution raster",
-            media_type=pystac.MediaType.GEOTIFF
+            href= netCDF_link,
+            title="netCDF",
+            media_type="application/netcdf"
         )
     )
-    
-    # TODO add a link to the netcdf
 
-    # validate the item
-    try:
-        item.validate()
-        print("The item is valid according to the STAC specification.")
-    except Exception as e:
-        print(f"Validation error: {e}")
-
-    # add item to collection
+    # add item this days collection
     collection.add_item(item)
 
     # Key for the object in the S3 bucket, inside the "items" folder
@@ -265,6 +277,13 @@ for link in tif_urls:
 
     # Set the item's self_href to the S3 URL
     item.set_self_href(f'https://{bucket_name}.s3.amazonaws.com/{object_key}')   
+ 
+    # validate the item
+    try:
+        item.validate()
+        print("The item is valid according to the STAC specification.")
+    except Exception as e:
+        print(f"Validation error: {e}")
 
     # Convert the item to a JSON string
     item_json = json.dumps(item.to_dict())
@@ -276,9 +295,9 @@ for link in tif_urls:
     loader.load_items(file=item.self_href, insert_mode=Methods.upsert)
 
     # clean up the tmp_dir
-#    for item in os.listdir(tmp_dir):
-#        item_path = os.path.join(tmp_dir, item)
-#        if os.path.isfile(item_path) or os.path.islink(item_path):
-#            os.remove(item_path)  # Remove the file or link
-#        elif os.path.isdir(item_path):
-#            shutil.rmtree(item_path)  # Remove the directory and all its contents
+    for item in os.listdir(tmp_dir):
+        item_path = os.path.join(tmp_dir, item)
+        if os.path.isfile(item_path) or os.path.islink(item_path):
+            os.remove(item_path)  # Remove the file or link
+        elif os.path.isdir(item_path):
+            shutil.rmtree(item_path)  # Remove the directory and all its contents

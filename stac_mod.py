@@ -62,29 +62,25 @@ def transform_bbox_to_crs(bbox, src_crs, dst_crs):
     transformer = Transformer.from_crs(src_crs, dst_crs, always_xy=True)
     minx, miny = transformer.transform(bbox.bounds[0], bbox.bounds[1])
     maxx, maxy = transformer.transform(bbox.bounds[2], bbox.bounds[3])
-    return box(minx, miny, maxx, maxy)
 
-# Create a thumbnail from downloaded image
 def create_preview(raster, preview_path, size=(256, 256)):
     with rasterio.open(raster) as src:
-        # Read the single band of the image
-        img_data = src.read(1)  # This reads band 1 into a 2D numpy array
+        # Read the single band
+        img_data = src.read(1)
         
-        # Access the colormap from the raster if it exists
-        try:
-            colormap = src.colormap(1)  # Get the colormap for band 1
-            # Apply the colormap to create an RGB image
-            # Colormap keys are pixel values, and values are RGB colors
-            img_data_rgb = np.zeros((img_data.shape[0], img_data.shape[1], 3), dtype=np.uint8)
-            for key, value in colormap.items():
-                img_data_rgb[img_data == key] = value
-        except ValueError:
-            # Normalize the image data to 0-255 as a fallback if no colormap exists
-            img_data_normalized = ((img_data - img_data.min()) / (img_data.max() - img_data.min()) * 255).astype(np.uint8)
-            img_data_rgb = np.stack((img_data_normalized,) * 3, axis=-1)  # Stack to create a grayscale RGB image
+        # Retrieve the colormap from the raster
+        colormap = src.colormap(1)
+        
+        # Initialize an empty RGB(A) array
+        img_data_rgba = np.zeros((img_data.shape[0], img_data.shape[1], 4), dtype=np.uint8)
+        
+        # Apply the colormap to create an RGBA representation
+        for index, color in colormap.items():
+            mask = img_data == index
+            img_data_rgba[mask] = color  # Color is expected to be RGBA
 
-        # Create a PIL Image from the RGB data
-        pil_image = Image.fromarray(img_data_rgb)
+        # Convert the RGBA array to a PIL Image
+        pil_image = Image.fromarray(img_data_rgba, 'RGBA')
 
         # Resize the image
         preview = pil_image.resize(size, Image.ANTIALIAS)
