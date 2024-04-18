@@ -8,6 +8,7 @@ import rasterio
 import urllib.request
 import pystac
 from pystac.extensions.projection import ProjectionExtension
+from pystac.extensions.eo import EOExtension
 from datetime import datetime, timezone, timedelta
 from shapely.geometry import Polygon, mapping, box
 from pyproj import Transformer
@@ -65,48 +66,6 @@ def update_collection(collection,collection_object_key,bucket_name,loader,s3):
 
     # upsert the new/modified collection item to the catalog
     loader.load_collections(file=collection.self_href, insert_mode=Methods.upsert)
-
-
-def get_subcollection(date, main_collection, loader, s3):
-    """
-    This function checks if a subcollection for a specific date exists.
-j   If it does not, it creates the subcollection and returns it.
-    """
-    subcollection_key = f'collections/viirs-1-day/{date}/collection.json'
-    subcollection_id = f"viirs-1-day-composite-{date.replace('/', '')}"
-    subcollection_href = f'https://{bucket_name}.s3.amazonaws.com/{subcollection_key}'
-
-    try:
-        # Check if subcollection exists in S3
-        s3.head_object(Bucket=bucket_name, Key=subcollection_key)
-        # Download the existing subcollection JSON from S3
-        response = s3.get_object(Bucket=bucket_name, Key=subcollection_key)
-        subcollection_json = response['Body'].read()
-        subcollection = pystac.Collection.from_dict(json.loads(subcollection_json))
-        logging.info("Subcollection exists and loaded successfully.")
-    except ClientError:
-        # If subcollection does not exist, create it
-        subcollection = pystac.Collection(
-            id=subcollection_id,
-            description=f"VIIRS 1-day composite flood water fraction product for {date}.",
-            extent=main_collection.extent,
-            title=f"VIIRS 1-day Composite for {date}",
-            license='CC0-1.0',
-            providers=main_collection.providers
-        )
-        subcollection.add_link(pystac.Link(rel="root", target=main_collection.get_self_href()))
-
-        subcollection.add_link(pystac.Link(rel="parent", target=main_collection.get_self_href()))
-
-        subcollection.stac_version = "1.0.0"
-
-        main_collection.add_child(subcollection)
-       
-        # Manually set or update the 'self' link
-        subcollection.remove_links('self')  # Remove existing 'self' link if any
-        subcollection.add_link(pystac.Link(rel="self", target=subcollection_href))  # Add the new 'self' link
-
-    return subcollection, subcollection_key
 
 def generate_date_range(start_date, end_date):
     for n in range(int((end_date - start_date).days)):
@@ -173,7 +132,7 @@ else:
     # that the temporal extent will be the 24 hour period the composite was created in 0 Z.
     collection = pystac.Collection(
         id='viirs-1-day-composite',
-        description='VIIRS 1-day composite flood water fraction product collection. Each days worth of products is organized as a subcollection of this collection. Please contact slia at gmu.edu for product specific questions.',
+        description='VIIRS 1-day composite flood water fraction product collection. Please contact slia at gmu.edu for product specific questions.',
         title = "viirs-1-day-composite",
         keywords = ["VIIRS", "flood", "composite", "daily", "surface water"],
         extent=pystac.Extent(
@@ -190,8 +149,22 @@ else:
         media_type='text/html'
     ))
 
+    # add a queryables link
+    collection.add_link(pystac.Link(
+        rel="http://www.opengis.net/def/rel/ogc/1.0/queryables",
+        target="https://waternode.ciroh.org/api/collections/viirs-1-day-composite/queryables",
+        media_type="application/schema+json",
+        title="Queryables for viirs-1-day"
+        ))
+
     # set stac version collection conforms to
     collection.stac_version = "1.0.0"
+
+    # Enable the projection extension on the collection
+    ProjectionExtension.add_to(collection)
+
+    # Add EO extension to the collection
+    EOExtension.add_to(collection)
 
     collection.providers = [
         pystac.Provider(name="NOAA NESDIS", roles=["producer", "licensor"], url="https://www.nesdis.noaa.gov/"),
@@ -210,11 +183,6 @@ for single_date in generate_date_range(start_date, yesterday_date):
 
     formatted_date = single_date.strftime("%Y/%m/%d")
     jpss_prefix = f'JPSS_Blended_Products/VFM_1day_GLB/TIF/{formatted_date}/'
-    subcollection, subcollection_key = get_subcollection(single_date.strftime('%Y/%m/%d'), collection, loader, s3)
-
-    # write subcollection to s3 and database update main collection to include new subcollection 
-    update_collection(subcollection, subcollection_key, bucket_name,loader, s3)
-    update_collection(collection, collection_object_key, bucket_name,loader, s3)
 
     tif_urls = list_tifs_in_bucket(jpss_bucket_name, jpss_prefix, s3)
     tmp_dir = tempfile.mkdtemp(dir='/home/dylan/wncat/tmpimgs')
@@ -271,7 +239,7 @@ for single_date in generate_date_range(start_date, yesterday_date):
         truncated_id = filename.split("_")[0]
         title = f"{truncated_id}_{single_date.strftime('%Y%m%d')}"
 
-        item = pystac.Item(id=truncated_id[-3:],
+        item = pystac.Item(id=f"{item_datetime_string}-{truncated_id[-3:]}",
                            geometry=footprint,
                            bbox=bbox.bounds,
                            collection = collection,
@@ -300,6 +268,18 @@ for single_date in generate_date_range(start_date, yesterday_date):
 
         # Enable the projection extension on the item
         ProjectionExtension.add_to(item)
+
+        # Add EO extension to the item
+        EOExtension.add_to(item)
+
+        # Set snow and cloud cover percentages 
+        eo_ext = EOExtension.ext(item)
+        # calculate % cloud cover and then set
+        cloud_percent = sm.calculate_cover_percent(img_path,30)
+        eo_ext.cloud_cover = cloud_percent
+        # calculate % snow cover and then set
+        snow_percent= sm.calculate_cover_percent(img_path,20)
+        eo_ext.snow_cover = snow_percent
 
         # Add projection information
         proj_ext = ProjectionExtension.ext(item)
@@ -336,8 +316,8 @@ for single_date in generate_date_range(start_date, yesterday_date):
             )
         )
 
-        # add item this days subcollection
-        subcollection.add_item(item)
+        # add item this days collection
+        collection.add_item(item)
        
         # Key for the item object in the S3 bucket
         item_key = f'items/viirs-1-day/{item.datetime.strftime("%Y/%m/%d")}/{item.id}.json'
@@ -359,8 +339,8 @@ for single_date in generate_date_range(start_date, yesterday_date):
         # insert/update the item in the database
         loader.load_items(file=item.self_href, insert_mode=Methods.upsert)
 
-        # update subcollection
-        update_collection(subcollection, subcollection_key, bucket_name, loader, s3)   
+        # update collection
+        update_collection(collection, collection_object_key, bucket_name,loader, s3)
 
     # clean up the tmp_dir
     shutil.rmtree(tmp_dir)

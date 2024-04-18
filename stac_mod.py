@@ -82,8 +82,17 @@ def create_preview(raster, preview_path, size=(256, 256)):
         # Convert the RGBA array to a PIL Image
         pil_image = Image.fromarray(img_data_rgba, 'RGBA')
 
-        # Resize the image
-        preview = pil_image.resize(size, Image.ANTIALIAS)
+        # Calculate new size to maintain aspect ratio
+        img_width, img_height = pil_image.size
+        max_width, max_height = size
+        scale = min(max_width/img_width, max_height/img_height)
+
+        # New size with maintained aspect ratio
+        new_width = int(img_width * scale)
+        new_height = int(img_height * scale)
+
+        # Resize the image with new size
+        preview = pil_image.resize((new_width, new_height), Image.ANTIALIAS)
 
         # Save the preview
         preview.save(preview_path, format="PNG")
@@ -136,3 +145,23 @@ def upload_to_s3_with_retry(s3_client, file_path, bucket, key, max_retries=5, ba
             time.sleep(backoff_factor ** attempt)  # Exponential backoff
             attempt += 1
     raise Exception(f"Failed to upload {file_path} to s3://{bucket}/{key} after {max_retries} retries")
+
+def calculate_cover_percent(img_path,val):
+    try:
+        with rasterio.open(img_path) as src:
+            # Read the first band
+            band1 = src.read(1)
+            
+            # Count pixels with value x (30 for cloudy pixels and 20 for snow)
+            val_pixels = np.sum(band1 == val)
+            
+            # Total number of pixels in the image
+            total_pixels = band1.size
+            
+            # Compute the percentage of the image under cloud cover
+            cover_percentage = np.round((val_pixels / total_pixels) * 100)
+            
+        return cover_percentage
+    except Exception as e:
+        print(f"An error occurred calculating cloud cover: {e}")
+        return None
